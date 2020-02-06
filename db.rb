@@ -41,6 +41,11 @@ class DB
     def server_configuration
       @server_configuration ||= @db.get_first_value("select server_configuration from vm where id = ?", [@droplet_id])
     end
+    def ready?
+      if !(@droplet = @client.droplets.find(id: @droplet_id)).networks.v4.empty?
+        self.ip_address = @droplet.networks.v4.first.ip_address
+      end
+    end
   end
   def initialize
     @db = SQLite3::Database.new("wireguard-vpn.db")

@@ -41,12 +41,12 @@ droplet = DropletKit::Droplet.new(
 # Kick off the droplet creation process.
 response = client.droplets.create_multiple(droplet).first
 STDERR.puts "Waiting for IP address."
-# Incrementally save the data associated with this instance in the database.
+# Create our model of the droplet so we can start acting on it.
 droplet_model = db.new_droplet(response, client)
-while (droplet = client.droplets.find(id: droplet_model.droplet_id)).networks.v4.empty?
+while !droplet_model.ready?
   sleep 5
 end
-droplet_model.ip_address = (ip_address = droplet.networks.v4.first.ip_address)
+ip_address = droplet_model.ip_address
 STDOUT.puts "Got IP address: #{ip_address}."
 # Now we try to ssh in and grab the client configuration.
 ssh_command = "if [[ ! -e #{client_conf_location} ]]; then echo 'waiting'; else echo 'done'; fi"
