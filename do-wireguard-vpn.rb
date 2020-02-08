@@ -46,23 +46,20 @@ droplet_model = db.new_droplet(response, client)
 while !droplet_model.ready?
   sleep 5
 end
-ip_address = droplet_model.ip_address
-STDOUT.puts "Got IP address: #{ip_address}."
+STDOUT.puts "Got IP address: #{droplet_model.ip_address}."
 # Now we try to ssh in and grab the client configuration.
-ssh_command = "if [[ ! -e #{client_conf_location} ]]; then echo 'waiting'; else echo 'done'; fi"
-ssh_options = "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ConnectTimeout=5"
-ssh_prefix = "ssh #{ssh_options} root@#{ip_address}"
+ssh_command = "if [[ ! -e #{client_conf_location} ]]; then echo 'waiting'; else echo 'done'; fi".freeze
 STDERR.puts "Waiting for configuration file to be created."
-while (ready = `#{ssh_prefix} "#{ssh_command}" 2> /dev/null`.strip).empty? || ready[/^waiting$/]
+while (ready = droplet_model.ssh_command(ssh_command, "2> /dev/null").strip).empty? || ready[/^waiting$/]
   sleep 5
 end
 STDERR.puts "Configuration file created on the remote host so copying it to local host."
 # Save the configurations to the database.
-droplet_model.client_configuration = (client_configuration = `#{ssh_prefix} "cat #{client_conf_location}" 2> /dev/null | tee /tmp/wireguard-client.conf`.strip)
-droplet_model.server_configuration = (server_configuration = `#{ssh_prefix} "cat #{server_conf_location}" 2> /dev/null | tee /tmp/wireguard-server.conf`.strip)
+droplet_model.client_configuration = (client_configuration = droplet_model.ssh_command("cat #{client_conf_location}", "2> /dev/null | tee /tmp/wireguard-client.conf").strip)
+droplet_model.server_configuration = (server_configuration = droplet_model.ssh_command("cat #{server_conf_location}", "2> /dev/null | tee /tmp/wireguard-server.conf").strip)
 # Restart the server.
 STDERR.puts "Restarting VM just in case any changes require a restart."
-`#{ssh_prefix} "shutdown -r now" &> /dev/null`
+droplet_model.ssh_command("shutdown -r now", "&> /dev/null")
 # Write out the configuration contents. Can be compared with /tmp/wireguard-client.conf. They should be the same.
 File.open(File.basename(client_conf_location), 'w') { |f| f.puts client_configuration }
 File.open(File.basename(server_conf_location), 'w') { |f| f.puts server_configuration }

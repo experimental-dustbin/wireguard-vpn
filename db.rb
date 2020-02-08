@@ -4,12 +4,16 @@ class DB
   # The model/view we have of the Droplet.
   class Droplet
     attr_reader :droplet_id
+    @@ssh_options = "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ConnectTimeout=5".freeze
     def initialize(response, client, db)
       @response, @client, @db = response, client, db
       @db.execute(
         "insert into vm (id, ip, server_configuration, client_configuration) values (?, ?, ?, ?)",
         [@droplet_id = response.id, '', '', '']
       )
+    end
+    def ssh_command(command, postfix)
+      `ssh #@ssh_options root@#{ip_address} "#{command}" #{postfix}`
     end
     def ip_address=(address)
       @ip_address = address
