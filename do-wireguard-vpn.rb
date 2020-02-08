@@ -1,9 +1,50 @@
 require 'droplet_kit'
+require 'optimist'
 require_relative './script'
 require_relative './db'
 
 # Grab the database for keeping track of configurations and VMs.
 db = DB.new
+# Initialize the client. Try to get the token from the database and if it is not there
+# then get it from the environment and save it to the database.
+token = ENV['DO_TOKEN'] || (raise StandardError, "Provide digital ocean token with DO_TOKEN environment variable.")
+client = DropletKit::Client.new(access_token: token)
+
+# Now we parse some arguments.
+subcommands = %w(create destroy configuration list)
+Optimist::options do
+  banner <<-EOS
+Manage wireguard VPNs from the command line.
+Usage:
+  [DO_TOKEN=$TOKEN] bundle exec ruby do-wireguard-vpn.rb [#{subcommands.join('|')}] [subcommand options]
+EOS
+  stop_on subcommands
+end
+case (cmd = ARGV.shift)
+when 'create'
+  # Just fall through since the default action is creation.
+when 'destroy'
+  # Indiscriminate destruction.
+  opts = Optimist::options do
+    opt :id, "ID of the VM to destroy", type: :string
+  end
+  client.droplets.delete(id: (opts[:id] || Optimist::die("--id parameter is required for VM destruction.").to_i))
+  db.delete(opts[:id])
+  exit
+when 'configuration'
+  opts = Optimist::options do
+    opt :id, "ID of the VM for the client configuration", type: :string
+  end
+  Optimist::die("--id parameter is required for listing client configuration.") if opts[:id].nil?
+  STDOUT.puts db.configuration(opts[:id])
+  exit
+when 'list'
+  STDOUT.puts db.list
+  exit
+else
+  Optimist::die "Unknown subcommand: #{cmd.inspect}."
+end
+
 client_conf_location = "/tmp/wireguard-client.conf"
 server_conf_location = "/etc/wireguard/wg0.conf"
 setup_script = SetupScript[
@@ -13,17 +54,8 @@ setup_script = SetupScript[
   client_conf_location: client_conf_location,
   server_conf_location: server_conf_location
 ]
-# Initialize the client. Try to get the token from the database and if it is not there
-# then get it from the environment and save it to the database.
-if (token = db.token).nil? || token.empty?
-  db.token = (token = ENV['DO_TOKEN'] || (raise StandardError, "Provide digital ocean token with DO_TOKEN environment variable."))
-end
-client = DropletKit::Client.new(access_token: token)
-# Grab the ssh keys assuming one of them is available locally and will let us log in. If they're in the local database
-# then use what is there. If not then grab them from the remote and store them locally for reuse.
-if (ssh_keys = db.ssh_keys).nil? || ssh_keys.empty?
-  db.ssh_keys = (ssh_keys = client.ssh_keys.all.map { |k| k.fingerprint })
-end
+# Grab the ssh keys assuming one of them is available locally and will let us log in.
+ssh_keys = client.ssh_keys.all.map { |k| k.fingerprint }
 # Dump the userdata script locally for debugging purposes.
 File.open('/tmp/wireguard-userdata.sh', 'w') { |f| f.puts setup_script }
 # Create a new droplet with the above inline script as the userdata script.

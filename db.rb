@@ -8,12 +8,12 @@ class DB
     def initialize(response, client, db)
       @response, @client, @db = response, client, db
       @db.execute(
-        "insert into vm (id, ip, server_configuration, client_configuration) values (?, ?, ?, ?)",
-        [@droplet_id = response.id, '', '', '']
+        "insert into vm (id, ip, region, server_configuration, client_configuration) values (?, ?, ?, ?, ?)",
+        [@droplet_id = response.id, '', @region = response.region.slug, '', '']
       )
     end
     def ssh_command(command, postfix)
-      `ssh #@ssh_options root@#{ip_address} "#{command}" #{postfix}`
+      `ssh #@@ssh_options root@#{ip_address} "#{command}" #{postfix}`
     end
     def ip_address=(address)
       @ip_address = address
@@ -54,37 +54,32 @@ class DB
   def initialize
     @db = SQLite3::Database.new("wireguard-vpn.db")
     @db.execute <<-SQL
-      create table if not exists configuration (
-        k string primary key not null,
-        v string
-      );
-SQL
-    @db.execute <<-SQL
       create table if not exists vm (
         id int primary key not null,
         ip string not null,
+        region string not null,
         server_configuration string not null,
         client_configuration string not null
       );
 SQL
   end
-  def token
-    @db.get_first_value("select v from configuration where k = 'DO_TOKEN'")
-  end
-  def token=(t)
+  def delete(i)
     @db.execute(
-      "insert into configuration (k, v) values (?, ?)",
-      ['DO_TOKEN', t]
+      "delete from vm where id = ?",
+      [i]
     )
   end
-  def ssh_keys
-    (@db.get_first_value("select v from configuration where k = 'DO_SSH_KEYS'") || '').split(',')
+  def configuration(i)
+    @db.get_first_value("select client_configuration from vm where id = ?", [i])
   end
-  def ssh_keys=(keys)
+  def list
+    data = []
     @db.execute(
-      "insert into configuration (k, v) values (?, ?)",
-      ['DO_SSH_KEYS', keys.join(',')]
-    )
+      "select id, ip, region from vm"
+    ) do |row|
+      data << row.join(' | ')
+    end
+    data.join("\n")
   end
   def close
     @db.close
