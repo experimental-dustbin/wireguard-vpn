@@ -27,9 +27,15 @@ when 'destroy'
   # Indiscriminate destruction.
   opts = Optimist::options do
     opt :id, "ID of the VM to destroy", type: :string
+    opt :force, default: true
   end
-  client.droplets.delete(id: (opts[:id] || Optimist::die("--id parameter is required for VM destruction.").to_i))
-  db.delete(opts[:id])
+  id = (opts[:id] || Optimist::die("--id parameter is required for VM destruction.")).to_i
+  begin
+    client.droplets.delete(id: id)
+  rescue StandardError => e
+    raise e unless opts[:force]
+  end
+  db.delete(id)
   exit
 when 'configuration'
   opts = Optimist::options do
