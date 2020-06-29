@@ -15,9 +15,8 @@ while ! ( curl $GG &> /dev/null ); do
 done
 # Install wireguard, unbound, and other utilities
 export DEBIAN_FRONTEND=noninteractive
-U="unbound"
 apt update &> /dev/null
-apt install -q -y wireguard iptables-persistent $U $U-host net-tools &> /dev/null
+apt install -q -y wireguard iptables-persistent unbound unbound-host net-tools &> /dev/null
 # Generate keys
 P="PrivateKey"
 PK="PublicKey"
@@ -26,9 +25,7 @@ C="Client"
 wg genkey | tee $S$P | wg pubkey > $S$PK
 wg genkey | tee $C$P | wg pubkey > $C$PK
 # Generate wireguard server configuration
-W="wg0"
-WG="$W.conf"
-cat << SERVER > $WG
+cat << SERVER > wg0.conf
 [Interface]
 Address = #{server_subnet}
 SaveConfig = true
@@ -54,32 +51,19 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 21
 CLIENT
 # Enable wireguard service
-chown -v root:root $WG
+chown -v root:root wg0.conf
 E="#{server_conf_location}"
-cp $WG $E
+cp wg0.conf $E
 chmod -v 600 $E
-wg-quick up $W
-systemctl enable wg-quick@$W.service
+systemctl enable wg-quick@wg0.service
 # Enable IP forwarding
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/20-ipv4-forward.conf
-sysctl -p
 echo 1 > /proc/sys/net/ipv4/ip_forward
-# Firewall rules
-iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -A INPUT -p udp -m udp --dport #{server_port} -m conntrack --ctstate NEW -j ACCEPT
-iptables -A INPUT -s #{server_subnet} -p tcp -m tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
-iptables -A INPUT -s #{server_subnet} -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
-iptables -A FORWARD -i wg0 -o wg0 -m conntrack --ctstate NEW -j ACCEPT
-iptables -t nat -A POSTROUTING -s #{server_subnet} -o eth0 -j MASQUERADE
-# Save the rules
-N="netfilter-persistent"
-systemctl enable $N
-$N save
+sysctl -p
 # Download list of root DNS servers
-curl -o /var/lib/$U/root.hints "https://www.internic.net/domain/named.cache"
+curl -o /var/lib/unbound/root.hints "https://www.internic.net/domain/named.cache"
 # Create unbound configuration
-cat << UNBOUND > /etc/$U/$U.conf.d/$WG
+cat << UNBOUND > /etc/unbound/unbound.conf.d/wg0.conf
 server:
 
   num-threads: 4
@@ -88,7 +72,7 @@ server:
   verbosity: 1
 
   #list of Root DNS Server
-  root-hints: "/var/lib/$U/root.hints"
+  root-hints: "/var/lib/unbound/root.hints"
 
   #Respond to DNS requests on all interfaces
   interface: 0.0.0.0
@@ -126,19 +110,37 @@ server:
   prefetch-key: yes
 UNBOUND
 # Set the correct permissions
-chown -R $U:$U /var/lib/$U
+chown -R unbound:unbound /var/lib/unbound
 # Disable and stop systemd-resolved
 SS="systemd-resolved"
 S="systemctl"
 $S stop $SS
 $S disable $SS
 # Enable and restart unbound
-$S enable $U
-$S restart $U
+$S enable unbound
+$S restart unbound
 # Verify that unbound is working
-nslookup $GG. #{server_subnet[0..-4]}
+nslookup $GG. localhost
 # Copy the client configuration into a known place so we can get it with ssh
 cp client.conf #{client_conf_location}
 SETUPSCRIPT
+    reboot_script = <<-REBOOTSCRIPT
+#!/bin/bash
+set -euo pipefail
+set -x
+wg-quick up wg0
+# Firewall rules
+iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A INPUT -p udp -m udp --dport #{server_port} -m conntrack --ctstate NEW -j ACCEPT
+iptables -A INPUT -s #{server_subnet} -p tcp -m tcp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+iptables -A INPUT -s #{server_subnet} -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+iptables -A FORWARD -i wg0 -o wg0 -m conntrack --ctstate NEW -j ACCEPT
+iptables -t nat -A POSTROUTING -s #{server_subnet} -o eth0 -j MASQUERADE
+# Save the rules
+systemctl enable netfilter-persistent
+netfilter-persistent save
+REBOOTSCRIPT
+    return setup_script, reboot_script
   end
 end

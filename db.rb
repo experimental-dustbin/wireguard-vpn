@@ -50,6 +50,9 @@ class DB
         self.ip_address = @droplet.networks.v4.first.ip_address
       end
     end
+    def copy_file(local_file, remote_file_name)
+      `scp #@@ssh_options '#{local_file}' root@#{ip_address}:#{remote_file_name}`
+    end
   end
   def initialize
     @db = SQLite3::Database.new("wireguard-vpn.db")

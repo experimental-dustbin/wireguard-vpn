@@ -1,5 +1,6 @@
 require 'droplet_kit'
 require 'optimist'
+require 'pry'
 require_relative './script'
 require_relative './db'
 
@@ -63,7 +64,9 @@ setup_script = SetupScript[
 # Grab the ssh keys assuming one of them is available locally and will let us log in.
 ssh_keys = client.ssh_keys.all.map { |k| k.fingerprint }
 # Dump the userdata script locally for debugging purposes.
-File.open('/tmp/wireguard-userdata.sh', 'w') { |f| f.puts setup_script }
+File.open('/tmp/wireguard-userdata.sh', 'w') { |f| f.puts setup_script[0] }
+after_reboot_script = '/tmp/wireguard-after-reboot-script.sh'
+File.open(after_reboot_script, 'w') { |f| f.puts setup_script[1] }
 # Create a new droplet with the above inline script as the userdata script.
 droplet = DropletKit::Droplet.new(
   names: ['wireguard-vpn'],
@@ -72,7 +75,7 @@ droplet = DropletKit::Droplet.new(
   region: ENV['DO_REGION'] || client.regions.all.map { |r| r.slug }.sample, 
   size: 's-1vcpu-1gb',
   ipv6: false,
-  user_data: setup_script,
+  user_data: setup_script[0],
   tags: ['wireguard', 'vpn'],
   ssh_keys: ssh_keys
 )
@@ -101,4 +104,12 @@ droplet_model.ssh_command("shutdown -r now", "&> /dev/null")
 # Write out the configuration contents. Can be compared with /tmp/wireguard-client.conf. They should be the same.
 File.open(File.basename(client_conf_location), 'w') { |f| f.puts client_configuration }
 File.open(File.basename(server_conf_location), 'w') { |f| f.puts server_configuration }
+# Wait for server to reboot.
+until (ready = droplet_model.ssh_command("echo ready", "").strip)[/ready/]
+  sleep 5
+end
+# Copy after reboot script to the host.
+droplet_model.copy_file(after_reboot_script, "after-reboot.sh")
+# Execute the script to bring up wireguard and set up IP table rules.
+STDOUT.puts droplet_model.ssh_command("/bin/bash after-reboot.sh", "")
 db.close
